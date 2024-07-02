@@ -73,6 +73,8 @@
 	export let availableToolIds = [];
 	export let selectedToolIds = [];
 	export let webSearchEnabled = false;
+	export let streamApiEnabled = false;
+	export let docRagEnabled = true;
 
 	export let prompt = '';
 	export let messages = [];
@@ -674,6 +676,8 @@
 									<InputMenu
 										bind:webSearchEnabled
 										bind:selectedToolIds
+										bind:streamApiEnabled
+										bind:docRagEnabled
 										tools={$tools.reduce((a, e, i, arr) => {
 											if (availableToolIds.includes(e.id) || ($_user?.role ?? 'user') === 'admin') {
 												a[e.id] = {

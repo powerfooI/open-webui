@@ -344,11 +344,11 @@ export const generateTextCompletion = async (token: string = '', model: string, 
 	return res;
 };
 
-export const generateChatCompletion = async (token: string = '', body: object) => {
+export const generateChatCompletion = async (token: string = '', body: object, base_url=undefined) => {
 	let controller = new AbortController();
 	let error = null;
 
-	const res = await fetch(`${OLLAMA_API_BASE_URL}/api/chat`, {
+	const res = await fetch(base_url ?? `${OLLAMA_API_BASE_URL}/api/chat`, {
 		signal: controller.signal,
 		method: 'POST',
 		headers: {

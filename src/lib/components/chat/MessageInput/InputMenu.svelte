@@ -10,6 +10,8 @@
 	import GlobeAltSolid from '$lib/components/icons/GlobeAltSolid.svelte';
 	import { config } from '$lib/stores';
 	import WrenchSolid from '$lib/components/icons/WrenchSolid.svelte';
+	import MenuLines from '$lib/components/icons/MenuLines.svelte';
+	import QuestionMarkCircle from '$lib/components/icons/QuestionMarkCircle.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -17,6 +19,9 @@
 
 	export let selectedToolIds: string[] = [];
 	export let webSearchEnabled: boolean;
+
+	export let streamApiEnabled: boolean;
+	export let docRagEnabled: boolean;
 
 	export let tools = {};
 	export let onClose: Function;
@@ -94,9 +99,34 @@
 
 					<Switch bind:state={webSearchEnabled} />
 				</div>
-
+				
 				<hr class="border-gray-100 dark:border-gray-800 my-1" />
-			{/if}
+				{/if}
+				
+				{#if docRagEnabled}
+					<div
+						class="flex gap-2 items-center px-3 py-2 text-sm font-medium cursor-pointer rounded-xl"
+					>
+						<div class="flex-1 flex items-center gap-2">
+							<MenuLines className="w-4 h-4" />
+							<div class="line-clamp-1">启用流式 API</div>
+						</div>
+
+						<Switch bind:state={streamApiEnabled} />
+					</div>
+				{/if}
+
+				<div
+					class="flex gap-2 items-center px-3 py-2 text-sm font-medium cursor-pointer rounded-xl"
+				>
+					<div class="flex-1 flex items-center gap-2">
+						<QuestionMarkCircle />
+						<div class="line-clamp-1">知识库问答</div>
+					</div>
+
+					<Switch bind:state={docRagEnabled} />
+				</div>
+
 
 			<DropdownMenu.Item
 				class="flex gap-2 items-center px-3 py-2 text-sm  font-medium cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800  rounded-xl"

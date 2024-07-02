@@ -1,4 +1,4 @@
-import { WEBUI_API_BASE_URL } from '$lib/constants';
+import { OPENAI_API_BASE_URL, WEBUI_API_BASE_URL } from '$lib/constants';
 import { getTimeRange } from '$lib/utils';
 
 export const createNewChat = async (token: string, chat: object) => {
@@ -753,5 +753,36 @@ export const archiveAllChats = async (token: string) => {
 		throw error;
 	}
 
+	return res;
+};
+
+export const generateBlockChat = async (token: string, params: object) => {
+	let error = null;
+
+	const res = await fetch(`${OPENAI_API_BASE_URL}/chat/block`, {
+		method: 'POST',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		},
+		body: JSON.stringify(params)
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.then((json) => {
+			return json;
+		})
+		.catch((err) => {
+			error = err.detail;
+
+			console.log(err);
+			return null;
+		});
+	if (error) {
+		throw error;
+	}
 	return res;
 };

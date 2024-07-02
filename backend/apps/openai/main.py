@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 
+import os
 import requests
 import aiohttp
 import asyncio
@@ -28,6 +29,7 @@ from config import (
     OPENAI_API_BASE_URLS,
     OPENAI_API_KEYS,
     CACHE_DIR,
+    AIOHTTP_CLIENT_TIMEOUT,
     ENABLE_MODEL_FILTER,
     MODEL_FILTER_LIST,
     AppConfig,
@@ -504,6 +506,62 @@ async def generate_chat_completion(
             if r:
                 r.close()
             await session.close()
+
+
+@app.post("/chat/block")
+async def generate_block_chat(form_data: dict, user=Depends(get_verified_user)):
+    url = f"{os.environ.get('AU_BASE_URL')}/service_run"
+
+    print(form_data)
+
+    payload = form_data
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+    response = requests.request("POST", url, headers=headers, json=payload)
+
+    return response.json()
+
+
+async def post_streaming_url(url: str, payload: str):
+    r = None
+    try:
+        session = aiohttp.ClientSession(
+            trust_env=True, timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT)
+        )
+        r = await session.post(url, data=payload)
+        r.raise_for_status()
+
+        return StreamingResponse(
+            r.content,
+            status_code=r.status,
+            headers=dict(r.headers),
+            background=BackgroundTask(cleanup_response, response=r, session=session),
+        )
+    except Exception as e:
+        error_detail = "Open WebUI: Server Connection Error"
+        if r is not None:
+            try:
+                res = await r.json()
+                if "error" in res:
+                    error_detail = f"Ollama: {res['error']}"
+            except:
+                error_detail = f"Ollama: {e}"
+
+        raise HTTPException(
+            status_code=r.status if r else 500,
+            detail=error_detail,
+        )
+
+
+@app.post("/chat/stream")
+async def generate_streaming_chat(form_data: dict, user=Depends(get_verified_user)):
+    url = f"{os.environ.get('RAG_BASE_URL')}/api/chat"
+    print(form_data)
+
+    return await post_streaming_url(url, json.dumps(form_data))
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
