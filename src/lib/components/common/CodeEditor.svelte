@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { basicSetup, EditorView } from 'codemirror';
-	import { keymap, placeholder } from '@codemirror/view';
+	import { keymap, placeholder, ViewUpdate } from '@codemirror/view';
 	import { Compartment, EditorState } from '@codemirror/state';
 
 	import { acceptCompletion } from '@codemirror/autocomplete';
@@ -19,11 +19,16 @@
 
 	export let boilerplate = '';
 	export let value = '';
+	export let readOnly = false;	// read only mode
+	export let key = ''; 					// key to re-render
 
-	let codeEditor;
+	let innerKey: string | null = null;
+
+	let codeEditor: EditorView | null;
 
 	let isDarkMode = false;
 	let editorTheme = new Compartment();
+	let readOnlyConfig = new Compartment();
 
 	export const formatPythonCodeHandler = async () => {
 		if (codeEditor) {
@@ -46,19 +51,35 @@
 		return false;
 	};
 
+	const onUpdate = (e: ViewUpdate) => {
+		if (e.docChanged && !readOnly) {
+			value = e.state.doc.toString();
+		}
+	};
+
 	let extensions = [
 		basicSetup,
 		keymap.of([{ key: 'Tab', run: acceptCompletion }, indentWithTab]),
 		python(),
 		indentUnit.of('    '),
 		placeholder('Enter your code here...'),
-		EditorView.updateListener.of((e) => {
-			if (e.docChanged) {
-				value = e.state.doc.toString();
-			}
-		}),
-		editorTheme.of([])
+		EditorView.updateListener.of(onUpdate),
+		editorTheme.of([]),
+		readOnlyConfig.of(EditorState.readOnly.of(readOnly))
 	];
+
+	$: {
+		codeEditor?.dispatch({
+			effects: readOnlyConfig.reconfigure(EditorState.readOnly.of(readOnly))
+		});
+	}
+
+	$: if (key !== innerKey) {
+		innerKey = key;
+		codeEditor?.dispatch({
+			changes: [{ from: 0, to: codeEditor.state.doc.length, insert: value }]
+		})
+	}
 
 	onMount(() => {
 		console.log(value);
@@ -66,10 +87,6 @@
 			value = boilerplate;
 		}
 
-		// Check if html class has dark mode
-		isDarkMode = document.documentElement.classList.contains('dark');
-
-		// python code editor, highlight python code
 		codeEditor = new EditorView({
 			state: EditorState.create({
 				doc: value,
@@ -78,8 +95,11 @@
 			parent: document.getElementById('code-textarea')
 		});
 
+		// Check if html class has dark mode
+		isDarkMode = document.documentElement.classList.contains('dark');
+
 		if (isDarkMode) {
-			codeEditor.dispatch({
+			codeEditor?.dispatch({
 				effects: editorTheme.reconfigure(oneDark)
 			});
 		}
@@ -93,12 +113,12 @@
 					if (_isDarkMode !== isDarkMode) {
 						isDarkMode = _isDarkMode;
 						if (_isDarkMode) {
-							codeEditor.dispatch({
-								effects: editorTheme.reconfigure(oneDark)
+							codeEditor?.dispatch({
+								effects: editorTheme.reconfigure([oneDark])
 							});
 						} else {
-							codeEditor.dispatch({
-								effects: editorTheme.reconfigure()
+							codeEditor?.dispatch({
+								effects: editorTheme.reconfigure([])
 							});
 						}
 					}
@@ -125,7 +145,6 @@
 		};
 
 		document.addEventListener('keydown', keydownHandler);
-
 		return () => {
 			observer.disconnect();
 			document.removeEventListener('keydown', keydownHandler);

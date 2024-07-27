@@ -2,36 +2,32 @@
 	import fileSaver from 'file-saver';
 	import { toast } from 'svelte-sonner';
 	import { copyToClipboard } from '$lib/utils';
-	import { type Writable } from 'svelte/store';
+	import { get, type Writable } from 'svelte/store';
 	import { v4 as uuidv4 } from 'uuid';
 
 	const { saveAs } = fileSaver;
 	import PyodideWorker from '$lib/workers/pyodide.worker?worker';
 
 	import { type PythonScript } from '$lib/types';
-	import { WEBUI_NAME, functions, models } from '$lib/stores';
+	import { WEBUI_NAME, functions, models, pythonScripts } from '$lib/stores';
 	import { getContext, tick } from 'svelte';
 
-	import { goto } from '$app/navigation';
 	import {
 		createNewPyScripts,
 		getPyScriptById,
-		getPyScripts,
+		listPyScripts,
 		updatePyScriptById,
-		deletePyScriptById
+		deletePyScriptById,
+		queryPyScriptsByName
 	} from '$lib/apis/scripts';
 
 	import { getModels } from '$lib/apis';
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 	import ConfirmDialog from '../common/ConfirmDialog.svelte';
-	import Tooltip from '../common/Tooltip.svelte';
-	import EllipsisHorizontal from '../icons/EllipsisHorizontal.svelte';
-	import Heart from '../icons/Heart.svelte';
-	import FunctionMenu from './Functions/FunctionMenu.svelte';
 	import type { i18n as i18nType } from 'i18next';
 	import CodeEditor from '../common/CodeEditor.svelte';
 
-	const boilerplate = `# Open WebUI Python Script
+	const boilerplate = `# Python Script Example - Quick Sort
 def quicksort(arr):
 	if len(arr) <= 1:
 		return arr
@@ -115,18 +111,115 @@ print("Sorted array:", sorted_arr)
 	let importFiles: FileList | null = null;
 
 	let showConfirm = false;
+	let showDeleteConfirm = false;
 	let query = '';
 
-	let showManifestModal = false;
-	let showValvesModal = false;
+	let timeoutToQuery: Timer | null = null; // For debouncing
+
+	$: if (query !== '') {
+		if (timeoutToQuery) {
+			clearTimeout(timeoutToQuery);
+		}
+		timeoutToQuery = setTimeout(async () => {
+			timeoutToQuery = null;
+			scriptList = await queryPyScriptsByName(localStorage.token, query);
+		}, 1000);
+	} else {
+		scriptList = $pythonScripts;
+	}
+
 	let selectedScript: PythonScript | null = null;
-	let creatingNewScript = false;
+	let editing = false;
 
-	let showDeleteConfirm = false;
+	let showingScript: PythonScript; // For better typing
 
-	function onCreateNewScript() {
-		selectedScript = null;
-		creatingNewScript = true;
+	$: if (selectedScript) {
+		showingScript = selectedScript;
+	}
+
+	const onUploadPythonFile = () => {
+		const reader = new FileReader();
+
+		reader.onload = async (event) => {
+			const newScripts = newPyScript();
+			newScripts.name = importFiles?.[0].name || '';
+			newScripts.content = event?.target?.result?.toString() || '';
+			selectedScript = newScripts;
+			editing = true;
+
+			toast.success($i18n.t('Python script imported successfully'));
+			pythonScripts.set(await listPyScripts(localStorage.token));
+		};
+
+		if (importFiles) {
+			reader.readAsText(importFiles[0]);
+		}
+	};
+
+	async function downloadScript() {
+		const blob = new Blob([showingScript.content], { type: 'text/plain;charset=utf-8' });
+		saveAs(blob, showingScript.name);
+	}
+
+	function newPyScript(): PythonScript {
+		return {
+			id: '',
+			name: '',
+			content: '',
+			meta: {
+				description: ''
+			},
+			created_at: '',
+			updated_at: '',
+			user_id: ''
+		};
+	}
+
+	async function prepareNewScript() {
+		const newScript = newPyScript();
+		newScript.content = boilerplate;
+		selectedScript = newScript;
+		editing = true;
+	}
+
+	async function onMutatingScript() {
+		if (showingScript.id !== '') {
+			updatePyScriptById(localStorage.token, showingScript.id, showingScript)
+				.then(async (res) => {
+					toast.success($i18n.t('Python script updated successfully'));
+					pythonScripts.set(await listPyScripts(localStorage.token));
+					editing = false;
+					selectedScript = res;
+				})
+				.catch((error) => {
+					toast.error(error);
+				});
+		} else {
+			createNewPyScripts(localStorage.token, showingScript)
+				.then(async (res) => {
+					toast.success($i18n.t('Python script created successfully'));
+					pythonScripts.set(await listPyScripts(localStorage.token));
+					editing = false;
+					selectedScript = res;
+				})
+				.catch((error) => {
+					toast.error(error);
+				});
+		}
+	}
+
+	async function loadScriptContent(id: string) {
+		editing = false;
+		stdout = stderr = result = null;
+		executing = false;
+		const res = await getPyScriptById(localStorage.token, id).catch((error) => {
+			toast.error(error);
+			return null;
+		});
+		if (res) {
+			selectedScript = res;
+			showingScript = res;
+		}
 	}
 
 	const deleteHandler = async (s: PythonScript) => {
@@ -136,17 +229,13 @@ print("Sorted array:", sorted_arr)
 		});
 
 		if (res) {
-			toast.success($i18n.t('Function deleted successfully'));
-
-			// functions.set(await getFunctions(localStorage.token));
-			models.set(await getModels(localStorage.token));
+			toast.success($i18n.t('Python script deleted successfully'));
+			pythonScripts.set(await listPyScripts(localStorage.token));
 		}
+		selectedScript = null;
 	};
-	let functionList: any[] = $functions;
 
-	$: functionList = $functions.filter(
-		(f: any) => query === '' || f.name.toLowerCase().includes(query.toLowerCase())
-	);
+	let scriptList: PythonScript[] = $pythonScripts;
 </script>
 
 <svelte:head>
@@ -155,14 +244,29 @@ print("Sorted array:", sorted_arr)
 	</title>
 </svelte:head>
 
-<div class=" h-full flex flex-col">
+<input
+	id="scripts-import-input"
+	bind:this={scriptImportInputElement}
+	bind:files={importFiles}
+	type="file"
+	accept=".py"
+	hidden
+	on:change={() => {
+		console.log(importFiles);
+		showConfirm = true;
+	}}
+/>
+
+<div class="h-full flex flex-col overflow-auto">
 	<!-- Panel Title -->
 	<div class="mb-3 flex justify-between items-center">
 		<div class="text-lg font-semibold self-center">{$i18n.t('Python Scripts')}</div>
 	</div>
-
+	<!-- Panel -->
 	<div class="flex flex-1">
-		<div class="border-r border-gray-600 pr-2">
+		<!-- Side Bar -->
+		<div class="border-r dark:border-gray-850 pr-2">
+			<!-- Search -->
 			<div class="flex w-80 space-x-2">
 				<div class="flex flex-1">
 					<div class="self-center ml-1 mr-3">
@@ -182,122 +286,148 @@ print("Sorted array:", sorted_arr)
 					<input
 						class="w-full text-sm pr-4 py-1 rounded-r-xl outline-none bg-transparent"
 						bind:value={query}
-						placeholder={$i18n.t('Search Scripts')}
+						placeholder={$i18n.t('Search Scripts By Name')}
 					/>
 				</div>
 
-				<div>
-					<button
-						class="px-2 py-2 rounded-xl border border-gray-200 dark:border-gray-600 dark:border-0 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1"
+				<!-- Upload Button -->
+				<button
+					class="px-2 py-2 rounded-xl border border-gray-200 dark:border-gray-600 dark:border-0 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1"
+					on:click={() => {
+						scriptImportInputElement.click();
+					}}
+				>
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						viewBox="0 0 16 16"
+						fill="currentColor"
+						class="w-4 h-4"
 					>
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							viewBox="0 0 16 16"
-							fill="currentColor"
-							class="w-4 h-4"
-						>
-							<path
-								d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"
-							/>
-						</svg>
-					</button>
-				</div>
+						<path
+							fill-rule="evenodd"
+							d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm4 9.5a.75.75 0 0 1-.75-.75V8.06l-.72.72a.75.75 0 0 1-1.06-1.06l2-2a.75.75 0 0 1 1.06 0l2 2a.75.75 0 1 1-1.06 1.06l-.72-.72v2.69a.75.75 0 0 1-.75.75Z"
+							clip-rule="evenodd"
+						/>
+					</svg>
+				</button>
+				<!-- Plus Button -->
+				<button
+					class="px-2 py-2 rounded-xl border border-gray-200 dark:border-gray-600 dark:border-0 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1"
+					on:click={() => {
+						prepareNewScript();
+					}}
+				>
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						viewBox="0 0 16 16"
+						fill="currentColor"
+						class="w-4 h-4"
+					>
+						<path
+							d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"
+						/>
+					</svg>
+				</button>
 			</div>
 			<hr class="w-80 dark:border-gray-850 my-2.5" />
 
-			<div class="my-3 mb-5">
-				{#each functionList as func}
-					<div
-						class="flex space-x-4 cursor-pointer w-80 px-3 py-2 dark:hover:bg-white/5 hover:bg-black/5 rounded-xl"
+			<!-- List -->
+			<div class="mb-5 overflow-y-scroll h-[810px] overflow-x-hidden">
+				{#each scriptList as script}
+					<button
+						class={`flex space-x-4 cursor-pointer w-80 px-3 py-2 my-1 dark:hover:bg-white/5 hover:bg-black/5 rounded-xl ${
+							selectedScript && selectedScript.id === script.id ? 'dark:bg-white/5 bg-black/5' : ''
+						}`}
+						on:click={async () => {
+							await loadScriptContent(script.id);
+						}}
 					>
-						<button
-							class="flex flex-1 space-x-3.5 cursor-pointer w-80"
-							on:click={() => {
-								onCreateNewScript();
-							}}
-						>
+						<div class="flex flex-1 space-x-3.5 cursor-pointer w-80">
 							<div class="flex items-center text-left">
 								<div class="flex-1 self-center pl-1">
 									<div class="font-semibold flex items-center gap-1.5">
-										<div
-											class="text-xs font-bold px-1 rounded uppercase line-clamp-1 bg-gray-500/20 text-gray-700 dark:text-gray-200"
-										>
-											{func.type}
-										</div>
-
-										{#if func?.meta?.manifest?.version}
-											<div
-												class="text-xs font-bold px-1 rounded line-clamp-1 bg-gray-500/20 text-gray-700 dark:text-gray-200"
-											>
-												v{func?.meta?.manifest?.version ?? ''}
-											</div>
-										{/if}
-
 										<div class="line-clamp-1">
-											{func.name}
+											{script.name}
 										</div>
 									</div>
 
-									<div class="flex gap-1.5 px-1">
-										<div class="text-gray-500 text-xs font-medium flex-shrink-0">{func.id}</div>
+									<div class="flex gap-1.5">
 										<div class="text-xs overflow-hidden text-ellipsis line-clamp-1">
-											{func.meta.description}
+											{script.meta.description || $i18n.t('(No description)')}
 										</div>
 									</div>
 								</div>
 							</div>
-						</button>
-						<div class="flex flex-row gap-0.5 self-center">
-							<FunctionMenu
-								{func}
-								editHandler={() => {}}
-								shareHandler={() => {}}
-								cloneHandler={() => {}}
-								exportHandler={() => {}}
-								deleteHandler={async () => {
-									selectedScript = func;
-									showDeleteConfirm = true;
-								}}
-								toggleGlobalHandler={() => {}}
-								onClose={() => {}}
-							>
-								<button
-									class="self-center w-fit text-sm p-1.5 dark:text-gray-300 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 rounded-xl"
-									type="button"
-								>
-									<EllipsisHorizontal className="size-5" />
-								</button>
-							</FunctionMenu>
 						</div>
-					</div>
+					</button>
 				{/each}
 			</div>
 		</div>
+
+		<!-- Editor -->
 		<div class="ml-2 flex-1 h-full flex flex-col">
-			{#if selectedScript || creatingNewScript}
+			{#if selectedScript}
 				<!-- Operation Panel -->
 				<div class="mb-4">
 					<div class="flex justify-between items-center">
 						<div class="font-semibold self-center">
-							{selectedScript ? $i18n.t('Edit Python Script') : $i18n.t('Create Python Script')}
+							{showingScript.id !== ''
+								? editing
+									? $i18n.t('Edit Python Script')
+									: $i18n.t('Python Script')
+								: $i18n.t('Create Python Script')}
 						</div>
 						<div class=" flex space-x-2">
-							<button
-								class="px-2 py-1 rounded-md border border-gray-200 dark:border-gray-600 dark:border-0 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1"
-								on:click={() => {
-									onCreateNewScript();
-								}}
-							>
-								Cancel
-							</button>
-							<button
-								class="px-2 py-1 rounded-md border border-gray-200 dark:border-gray-600 dark:border-0 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1"
-								on:click={() => {
-									onCreateNewScript();
-								}}
-							>
-								Create
-							</button>
+							{#if !editing && showingScript.id !== ''}
+								<button
+									class="px-2 py-1 rounded-md border border-gray-200 dark:border-gray-600 dark:border-0 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1"
+									on:click={() => {
+										showDeleteConfirm = true;
+									}}
+								>
+									{$i18n.t('Delete')}
+								</button>
+
+								<button
+									class="px-2 py-1 rounded-md border border-gray-200 dark:border-gray-600 dark:border-0 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1"
+									on:click={async () => {
+										await downloadScript();
+									}}
+								>
+									{$i18n.t('Download')}
+								</button>
+
+								<button
+									class="px-2 py-1 rounded-md border border-gray-200 dark:border-gray-600 dark:border-0 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1"
+									on:click={() => {
+										editing = true;
+									}}
+								>
+									{$i18n.t('Edit')}
+								</button>
+							{:else}
+								<button
+									class="px-2 py-1 rounded-md border border-gray-200 dark:border-gray-600 dark:border-0 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1"
+									on:click={async () => {
+										if (selectedScript && selectedScript.id === '') {
+											selectedScript = null;
+										} else {
+											await loadScriptContent(showingScript.id);
+										}
+										editing = false;
+									}}
+								>
+									{$i18n.t('Cancel')}
+								</button>
+								<button
+									class="px-2 py-1 rounded-md border border-gray-200 dark:border-gray-600 dark:border-0 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1"
+									on:click={() => {
+										onMutatingScript();
+									}}
+								>
+									{showingScript.id === '' ? $i18n.t('Create') : $i18n.t('Save')}
+								</button>
+							{/if}
 						</div>
 					</div>
 					<!-- inputs for name and description -->
@@ -312,6 +442,8 @@ print("Sorted array:", sorted_arr)
 								id="name"
 								placeholder="Script Name (e.g. quicksort.py)"
 								required
+								readonly={!editing}
+								bind:value={showingScript.name}
 							/>
 						</div>
 						<div class="flex w-full items-center">
@@ -324,6 +456,8 @@ print("Sorted array:", sorted_arr)
 								id="description"
 								placeholder="Description of the script (e.g. Sorts an array using quicksort)"
 								required
+								readonly={!editing}
+								bind:value={showingScript.meta.description}
 							/>
 						</div>
 					</div>
@@ -332,47 +466,88 @@ print("Sorted array:", sorted_arr)
 				<!-- Code Editor -->
 				<div class="rounded-t-lg bg-white px-2">
 					<div class="flex justify-between items-center text-sm text-gray-600">
-						<div class="font-semibold self-center">{$i18n.t('Python Script')}</div>
+						<div class="font-semibold self-center">{$i18n.t('Script Source')}</div>
 						<div class="flex space-x-2">
-							<button class=" text-blue-700" on:click={async () => {
-								try {
-									await copyToClipboard(boilerplate);
-									toast.success($i18n.t('Copied to clipboard'));
-								} catch (error) {
-									console.log(error)
-									toast.error($i18n.t('Failed to copy the code to clipboard'));
-								}
-							}}>Copy</button>
-							<button class=" text-blue-700" on:click={() => {
-								executePythonAsWorker(boilerplate);
-							}}>Run</button>
+							<button
+								class=" text-blue-700"
+								on:click={async () => {
+									try {
+										await copyToClipboard(showingScript.content);
+										toast.success($i18n.t('Copied to clipboard'));
+									} catch (error) {
+										console.log(error);
+										toast.error($i18n.t('Failed to copy the code to clipboard'));
+									}
+								}}>{$i18n.t('Copy')}</button
+							>
+							<button
+								class=" text-blue-700"
+								on:click={() => {
+									executePythonAsWorker(showingScript.content);
+								}}>{$i18n.t('Run')}</button
+							>
 						</div>
 					</div>
 				</div>
 				<div class="flex-1 max-h-[720px] min-h-0 flex flex-col">
-					<CodeEditor value={boilerplate} />
+					<CodeEditor
+						bind:value={showingScript.content}
+						readOnly={!editing}
+						key={selectedScript.id}
+					/>
 				</div>
 				{#if executing}
 					<div class="bg-[#202123] text-white px-4 py-4 rounded-b-lg">
-						<div class=" text-gray-500 text-xs mb-1">STDOUT/STDERR</div>
-						<div class="text-sm">Running...</div>
+						<div class=" text-gray-500 text-xs mb-1">{$i18n.t('STDOUT/STDERR')}</div>
+						<div class="text-sm">{$i18n.t('Running')}...</div>
 					</div>
 				{:else if stdout || stderr || result}
 					<div class="bg-[#202123] text-white px-4 py-4 rounded-b-lg">
-						<div class=" text-gray-500 text-xs mb-1">STDOUT/STDERR</div>
+						<div class=" text-gray-500 text-xs mb-1">{$i18n.t('STDOUT/STDERR')}</div>
 						<pre class="text-sm">{stdout || stderr || result}</pre>
 					</div>
 				{/if}
-
 			{:else}
-				<div class="flex items-center justify-center h-full">
+				<div class="flex flex-col items-center justify-center h-full gap-y-4">
 					<button
-						class="px-2 py-2 rounded-xl border border-gray-200 dark:border-gray-600 dark:border-0 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1"
+						class="w-40 px-2 py-2 rounded-xl border border-gray-200 dark:border-gray-600 dark:border-0 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1 justify-center"
 						on:click={() => {
-							onCreateNewScript();
+							prepareNewScript();
 						}}
 					>
-						Create new script
+						<span>
+							{$i18n.t('Create new script')}
+						</span>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 16 16"
+							fill="currentColor"
+							class="w-4 h-4"
+						>
+							<path
+								d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"
+							/>
+						</svg>
+					</button>
+					<button
+						class="w-40 px-2 py-2 rounded-xl border border-gray-200 dark:border-gray-600 dark:border-0 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1 justify-center"
+						on:click={() => {
+							scriptImportInputElement.click();
+						}}
+					>
+						<span>{$i18n.t('Upload script')}</span>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 16 16"
+							fill="currentColor"
+							class="w-4 h-4"
+						>
+							<path
+								fill-rule="evenodd"
+								d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm4 9.5a.75.75 0 0 1-.75-.75V8.06l-.72.72a.75.75 0 0 1-1.06-1.06l2-2a.75.75 0 0 1 1.06 0l2 2a.75.75 0 1 1-1.06 1.06l-.72-.72v2.69a.75.75 0 0 1-.75.75Z"
+								clip-rule="evenodd"
+							/>
+						</svg>
 					</button>
 				</div>
 			{/if}
@@ -380,62 +555,26 @@ print("Sorted array:", sorted_arr)
 	</div>
 </div>
 
-<input
-	id="documents-import-input"
-	bind:this={scriptImportInputElement}
-	bind:files={importFiles}
-	type="file"
-	accept=".py"
-	hidden
-	on:change={() => {
-		console.log(importFiles);
-		showConfirm = true;
-	}}
-/>
-
 <DeleteConfirmDialog
 	bind:show={showDeleteConfirm}
 	title={$i18n.t('Delete the python script?')}
 	on:confirm={() => {
-		// deleteHandler(selectedScript);
+		deleteHandler(showingScript);
 	}}
 >
 	<div class="text-sm text-gray-500">
-		{$i18n.t('This will delete')} <span class=" font-semibold">{selectedScript?.name}</span>.
+		{$i18n.t('This will delete')} <span class=" font-semibold">{showingScript.name}</span>.
 	</div>
 </DeleteConfirmDialog>
 
-<ConfirmDialog
-	bind:show={showConfirm}
-	on:confirm={() => {
-		const reader = new FileReader();
-		reader.onload = async (event) => {
-			// const _functions = JSON.parse(event.target.result);
-			// console.log(_functions);
-
-			// for (const func of _functions) {
-			// 	const res = await createNewFunction(localStorage.token, func).catch((error) => {
-			// 		toast.error(error);
-			// 		return null;
-			// 	});
-			// }
-
-			toast.success($i18n.t('Functions imported successfully'));
-			// functions.set(await getFunctions(localStorage.token));
-			models.set(await getModels(localStorage.token));
-		};
-		if (importFiles) {
-			reader.readAsText(importFiles[0]);
-		}
-	}}
->
+<ConfirmDialog bind:show={showConfirm} on:confirm={onUploadPythonFile}>
 	<div class="text-sm text-gray-500">
 		<div class="bg-yellow-500/20 text-yellow-700 dark:text-yellow-200 rounded-lg px-4 py-3">
 			<div>Please carefully review the following warnings:</div>
 
 			<ul class="mt-1 list-disc pl-4 text-xs">
-				<li>Functions allow arbitrary code execution.</li>
-				<li>Do not install functions from sources you do not fully trust.</li>
+				<li>Scripts allow arbitrary code execution.</li>
+				<li>Do not upload scripts from sources you do not fully trust.</li>
 			</ul>
 		</div>
 
