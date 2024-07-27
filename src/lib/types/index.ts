@@ -8,13 +8,17 @@ export type Banner = {
 	timestamp: number;
 };
 
+type Meta = {
+	description?: string;
+	manifest?: Record<string, string>;
+}
+
 export type PythonScript = {
 	id: string;
 	name: string;
-	description: string;
 	content: string;
 	user_id: string;
 	created_at: string;
 	updated_at: string;
-	meta: string
+	meta: Meta
 }

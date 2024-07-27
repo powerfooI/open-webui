@@ -21,7 +21,7 @@ from apps.webui.models.scripts import (
     Scripts,
     ScriptForm,
     ScriptModel,
-    ScriptResponse,
+    ScriptBrief,
 )
 from utils.utils import get_verified_user, get_admin_user
 from constants import ERROR_MESSAGES
@@ -44,19 +44,11 @@ router = APIRouter()
 ############################
 
 
-@router.post("/", response_model=Optional[ScriptResponse])
-async def create_new_function(
-    request: Request, form_data: ScriptForm, user=Depends(get_admin_user)
+@router.post("/", response_model=Optional[ScriptModel])
+async def create_new_script(
+    request: Request, form_data: ScriptForm, user=Depends(get_verified_user)
 ):
-    if not form_data.id.isidentifier():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only alphanumeric characters and underscores are allowed in the id",
-        )
-
-    form_data.id = form_data.id.lower()
-
-    script = Scripts.get_script_by_id(form_data.id)
+    script = Scripts.get_script_by_name(form_data.name, user_id=user.id)
     if script == None:
         try:
             script = Scripts.insert_new_script(user.id, form_data)
@@ -76,7 +68,7 @@ async def create_new_function(
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ERROR_MESSAGES.ID_TAKEN,
+            detail=ERROR_MESSAGES.NAME_TAG_TAKEN,
         )
 
 
@@ -85,10 +77,17 @@ async def create_new_function(
 ############################
 
 
-@router.get("/", response_model=List[ScriptModel])
-async def list_scripts(user=Depends(get_verified_user)):
-    files = Scripts.get_scripts()
-    return files
+@router.get("/", response_model=List[ScriptBrief])
+async def list_scripts(request: Request, user=Depends(get_verified_user)):
+    kwargs = {}
+    name_like = request.query_params.get("name_like")
+    if name_like:
+        kwargs["name_like"] = name_like
+    if user.role == "admin":
+        return Scripts.list_scripts(**kwargs)
+    else:
+        kwargs["user_id"] = user.id
+        return Scripts.list_scripts(**kwargs)
 
 
 ############################
@@ -98,11 +97,14 @@ async def list_scripts(user=Depends(get_verified_user)):
 
 @router.post("/{id}", response_model=Optional[ScriptModel])
 async def update_script_by_id(
-    request: Request, id: str, form_data: ScriptForm, user=Depends(get_admin_user)
+    request: Request, id: str, form_data: ScriptForm, user=Depends(get_verified_user)
 ):
     try:
-        updated = {**form_data.model_dump(exclude={"id"})}
-        script = Scripts.update_script_by_id(id, updated)
+        updated = {**form_data.model_dump()}
+        if user.role == "admin":
+            script = Scripts.update_script_by_id(id, updated)
+        else:
+            script = Scripts.update_script_by_id(id, updated, user_id=user.id)
         if script:
             return script
         else:
@@ -125,38 +127,13 @@ async def update_script_by_id(
 
 @router.get("/{id}", response_model=Optional[ScriptModel])
 async def get_script_by_id(id: str, user=Depends(get_verified_user)):
-    file = Scripts.get_script_by_id(id)
-
-    if file:
-        return file
+    if user.role == "admin":
+        script = Scripts.get_script_by_id(id)
     else:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=ERROR_MESSAGES.NOT_FOUND,
-        )
+        script = Scripts.get_script_by_id(id, user_id=user.id)
 
-
-############################
-# Get Script Content By Id
-############################
-
-
-@router.get("/{id}/content", response_model=Optional[ScriptModel])
-async def get_script_content_by_id(id: str, user=Depends(get_verified_user)):
-    file = Scripts.get_script_by_id(id)
-
-    if file:
-        file_path = Path(file.meta["path"])
-
-        # Check if the file already exists in the cache
-        if file_path.is_file():
-            print(f"file_path: {file_path}")
-            return FileResponse(file_path)
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=ERROR_MESSAGES.NOT_FOUND,
-            )
+    if script:
+        return script
     else:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -171,10 +148,13 @@ async def get_script_content_by_id(id: str, user=Depends(get_verified_user)):
 
 @router.delete("/{id}")
 async def delete_script_by_id(id: str, user=Depends(get_verified_user)):
-    file = Scripts.get_script_by_id(id)
+    if user.role == "admin":
+        script = Scripts.get_script_by_id(id)
+    else:
+        script = Scripts.get_script_by_id(id, user_id=user.id)
 
-    if file:
-        result = Scripts.delete_script_by_id(id)
+    if script:
+        result = Scripts.delete_script_by_id(id, user_id=user.id)
         if result:
             return {"message": "Script deleted successfully"}
         else:
