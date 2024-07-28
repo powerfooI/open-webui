@@ -58,7 +58,7 @@ export const createNewPyScripts = async (token: string, script: object) => {
   return res;
 };
 
-export const listPyScripts = async (token: string = '') => {
+export const listPyScripts = async (token: string = ''): Promise<any> => {
   let error = null;
 
   const res = await fetch(`${WEBUI_API_BASE_URL}/scripts/`, {

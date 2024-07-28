@@ -22,6 +22,7 @@ from apps.webui.models.scripts import (
     ScriptForm,
     ScriptModel,
     ScriptBrief,
+    ListScriptResponse,
 )
 from utils.utils import get_verified_user, get_admin_user
 from constants import ERROR_MESSAGES
@@ -77,9 +78,15 @@ async def create_new_script(
 ############################
 
 
-@router.get("/", response_model=List[ScriptBrief])
+@router.get("/", response_model=ListScriptResponse)
 async def list_scripts(request: Request, user=Depends(get_verified_user)):
     kwargs = {}
+    limit = request.query_params.get("limit")
+    offset = request.query_params.get("offset")
+    if limit:
+        kwargs["limit"] = limit
+    if offset:
+        kwargs["offset"] = offset
     name_like = request.query_params.get("name_like")
     if name_like:
         kwargs["name_like"] = name_like

@@ -1,31 +1,30 @@
 <script lang="ts">
-	import fileSaver from 'file-saver';
-	import { toast } from 'svelte-sonner';
 	import { copyToClipboard } from '$lib/utils';
-	import { get, type Writable } from 'svelte/store';
+	import { saveAs } from 'file-saver';
+	import { toast } from 'svelte-sonner';
+	import { type Writable } from 'svelte/store';
 	import { v4 as uuidv4 } from 'uuid';
 
-	const { saveAs } = fileSaver;
 	import PyodideWorker from '$lib/workers/pyodide.worker?worker';
 
+	import { pythonScripts, user } from '$lib/stores';
 	import { type PythonScript } from '$lib/types';
-	import { WEBUI_NAME, functions, models, pythonScripts } from '$lib/stores';
-	import { getContext, tick } from 'svelte';
+	import { getContext, onMount } from 'svelte';
 
 	import {
 		createNewPyScripts,
+		deletePyScriptById,
 		getPyScriptById,
 		listPyScripts,
-		updatePyScriptById,
-		deletePyScriptById,
-		queryPyScriptsByName
+		queryPyScriptsByName,
+		updatePyScriptById
 	} from '$lib/apis/scripts';
 
-	import { getModels } from '$lib/apis';
+	import { getUserById } from '$lib/apis/users';
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
-	import ConfirmDialog from '../common/ConfirmDialog.svelte';
 	import type { i18n as i18nType } from 'i18next';
 	import CodeEditor from '../common/CodeEditor.svelte';
+	import ConfirmDialog from '../common/ConfirmDialog.svelte';
 
 	const boilerplate = `# Python Script Example - Quick Sort
 def quicksort(arr):
@@ -69,7 +68,6 @@ print("Sorted array:", sorted_arr)
 		].filter(Boolean);
 
 		console.log(packages);
-
 		const pyodideWorker = new PyodideWorker();
 
 		pyodideWorker.postMessage({
@@ -113,7 +111,11 @@ print("Sorted array:", sorted_arr)
 	let showConfirm = false;
 	let showDeleteConfirm = false;
 	let query = '';
+	let ownerName: string | null = null;
 
+	let scriptList: PythonScript[] = $pythonScripts;
+	let totalScripts: number = 0;
+	
 	let timeoutToQuery: Timer | null = null; // For debouncing
 
 	$: if (query !== '') {
@@ -145,10 +147,19 @@ print("Sorted array:", sorted_arr)
 			newScripts.name = importFiles?.[0].name || '';
 			newScripts.content = event?.target?.result?.toString() || '';
 			selectedScript = newScripts;
-			editing = true;
+			showingScript = newScripts;
+
+			await onMutatingScript();
 
 			toast.success($i18n.t('Python script imported successfully'));
-			pythonScripts.set(await listPyScripts(localStorage.token));
+			const listRes = await listPyScripts(localStorage.token).catch((error) => {
+				toast.error(error);
+				return null;
+			});
+			if (listRes) {
+				pythonScripts.set(listRes.scripts);
+				totalScripts = listRes.total;
+			}
 		};
 
 		if (importFiles) {
@@ -184,23 +195,25 @@ print("Sorted array:", sorted_arr)
 
 	async function onMutatingScript() {
 		if (showingScript.id !== '') {
-			updatePyScriptById(localStorage.token, showingScript.id, showingScript)
+			return updatePyScriptById(localStorage.token, showingScript.id, showingScript)
 				.then(async (res) => {
 					toast.success($i18n.t('Python script updated successfully'));
 					pythonScripts.set(await listPyScripts(localStorage.token));
 					editing = false;
 					selectedScript = res;
+					return res;
 				})
 				.catch((error) => {
 					toast.error(error);
 				});
 		} else {
-			createNewPyScripts(localStorage.token, showingScript)
+			return createNewPyScripts(localStorage.token, showingScript)
 				.then(async (res) => {
 					toast.success($i18n.t('Python script created successfully'));
 					pythonScripts.set(await listPyScripts(localStorage.token));
 					editing = false;
 					selectedScript = res;
+					return res;
 				})
 				.catch((error) => {
 					toast.error(error);
@@ -220,6 +233,13 @@ print("Sorted array:", sorted_arr)
 			selectedScript = res;
 			showingScript = res;
 		}
+		if ($user?.role === 'admin' && res?.user_id !== $user?.id) {
+			await getUserById(localStorage.token, res?.user_id).then((user) => {
+				ownerName = user?.name;
+			});
+		} else {
+			ownerName = null;
+		}
 	}
 
 	const deleteHandler = async (s: PythonScript) => {
@@ -234,15 +254,7 @@ print("Sorted array:", sorted_arr)
 		}
 		selectedScript = null;
 	};
-
-	let scriptList: PythonScript[] = $pythonScripts;
 </script>
-
-<svelte:head>
-	<title>
-		{$i18n.t('Python Scripts')} | {$WEBUI_NAME}
-	</title>
-</svelte:head>
 
 <input
 	id="scripts-import-input"
@@ -258,12 +270,8 @@ print("Sorted array:", sorted_arr)
 />
 
 <div class="h-full flex flex-col overflow-auto">
-	<!-- Panel Title -->
-	<div class="mb-3 flex justify-between items-center">
-		<div class="text-lg font-semibold self-center">{$i18n.t('Python Scripts')}</div>
-	</div>
 	<!-- Panel -->
-	<div class="flex flex-1">
+	<div class="flex flex-1 h-[calc(100%-64px)]">
 		<!-- Side Bar -->
 		<div class="border-r dark:border-gray-850 pr-2">
 			<!-- Search -->
@@ -332,7 +340,7 @@ print("Sorted array:", sorted_arr)
 			<hr class="w-80 dark:border-gray-850 my-2.5" />
 
 			<!-- List -->
-			<div class="mb-5 overflow-y-scroll h-[810px] overflow-x-hidden">
+			<div class="mb-5 max-h-[calc(100%-64px)] overflow-x-hidden">
 				{#each scriptList as script}
 					<button
 						class={`flex space-x-4 cursor-pointer w-80 px-3 py-2 my-1 dark:hover:bg-white/5 hover:bg-black/5 rounded-xl ${
@@ -343,18 +351,30 @@ print("Sorted array:", sorted_arr)
 						}}
 					>
 						<div class="flex flex-1 space-x-3.5 cursor-pointer w-80">
-							<div class="flex items-center text-left">
+							<div class="flex items-center text-left w-full">
 								<div class="flex-1 self-center pl-1">
 									<div class="font-semibold flex items-center gap-1.5">
 										<div class="line-clamp-1">
 											{script.name}
 										</div>
+										{#if $user?.role === 'admin' && $user?.id === script.user_id}
+											<div
+												class=" ml-auto text-xs font-bold px-1 rounded uppercase shrink-0 bg-gray-500/20 text-gray-700 dark:text-gray-200"
+											>
+												{$i18n.t('Yours')}
+											</div>
+										{/if}
 									</div>
 
 									<div class="flex gap-1.5">
 										<div class="text-xs overflow-hidden text-ellipsis line-clamp-1">
 											{script.meta.description || $i18n.t('(No description)')}
 										</div>
+									</div>
+
+									<div class="text-xs text-gray-500 dark:text-gray-400">
+										{$i18n.t('Updated at')}
+										{new Date(parseInt(script.updated_at) * 1000).toLocaleString()}
 									</div>
 								</div>
 							</div>
@@ -374,7 +394,7 @@ print("Sorted array:", sorted_arr)
 							{showingScript.id !== ''
 								? editing
 									? $i18n.t('Edit Python Script')
-									: $i18n.t('Python Script')
+									: $i18n.t('Python Script Details') + (ownerName ? ` (Owned by ${ownerName})` : '')
 								: $i18n.t('Create Python Script')}
 						</div>
 						<div class=" flex space-x-2">
@@ -464,9 +484,9 @@ print("Sorted array:", sorted_arr)
 				</div>
 
 				<!-- Code Editor -->
-				<div class="rounded-t-lg bg-white px-2">
+				<div class="rounded-t-lg dark:bg-white bg-gray-50 px-2">
 					<div class="flex justify-between items-center text-sm text-gray-600">
-						<div class="font-semibold self-center">{$i18n.t('Script Source')}</div>
+						<div class="font-semibold self-center">{$i18n.t('Source Code')}</div>
 						<div class="flex space-x-2">
 							<button
 								class=" text-blue-700"
@@ -489,7 +509,7 @@ print("Sorted array:", sorted_arr)
 						</div>
 					</div>
 				</div>
-				<div class="flex-1 max-h-[720px] min-h-0 flex flex-col">
+				<div class="flex-1 max-h-[calc(100%-160px)] min-h-0 flex flex-col">
 					<CodeEditor
 						bind:value={showingScript.content}
 						readOnly={!editing}
@@ -573,7 +593,7 @@ print("Sorted array:", sorted_arr)
 			<div>Please carefully review the following warnings:</div>
 
 			<ul class="mt-1 list-disc pl-4 text-xs">
-				<li>Scripts allow arbitrary code execution.</li>
+				<li>Python Playground allow arbitrary code execution.</li>
 				<li>Do not upload scripts from sources you do not fully trust.</li>
 			</ul>
 		</div>

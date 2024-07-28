@@ -101,7 +101,7 @@
 					functions.set(await getFunctions(localStorage.token));
 				})(),
 				(async () => {
-					pythonScripts.set(await listPyScripts(localStorage.token));
+					pythonScripts.set((await listPyScripts(localStorage.token)).scripts ?? []);
 				})(),
 				(async () => {
 					banners.set(await getBanners(localStorage.token));

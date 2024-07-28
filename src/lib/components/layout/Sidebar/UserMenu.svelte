@@ -8,6 +8,7 @@
 	import { showSettings, activeUserCount, USAGE_POOL } from '$lib/stores';
 	import { fade, slide } from 'svelte/transition';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import PythonLogo from '$lib/components/icons/PythonLogo.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -78,6 +79,19 @@
 					<ArchiveBox className="size-5" strokeWidth="1.5" />
 				</div>
 				<div class=" self-center font-medium">{$i18n.t('Archived Chats')}</div>
+			</button>
+
+			<button
+				class="flex rounded-md py-2 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition"
+				on:click={() => {
+					goto('/python-playground');
+					show = false;
+				}}
+			>
+				<div class=" self-center mr-3">
+					<PythonLogo className="size-5" strokeWidth="1.5" />
+				</div>
+				<div class=" self-center font-medium">{$i18n.t('Python Playground')}</div>
 			</button>
 
 			{#if role === 'admin'}

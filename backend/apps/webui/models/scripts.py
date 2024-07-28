@@ -49,6 +49,15 @@ class ScriptBrief(BaseModel):
     created_at: int
 
 
+class ListScriptResponse(BaseModel):
+    """
+    ListScriptResponse is a response model for listing scripts
+    """
+
+    scripts: List[ScriptBrief]
+    total: int
+
+
 class ScriptModel(ScriptBrief):
     """
     ScriptModel extends ScriptBrief with content field
@@ -128,9 +137,11 @@ class ScriptsTable:
             ]
 
     def get_script_by_name(
-        self, name: str, **kwargs,
+        self,
+        name: str,
+        **kwargs,
     ) -> Optional[ScriptModel]:
-        filters = [Script.name==name]
+        filters = [Script.name == name]
         if kwargs.get("user_id"):
             filters.append(Script.user_id == kwargs.get("user_id"))
         try:
@@ -178,17 +189,24 @@ class ScriptsTable:
 
     # Admin methods
 
-    def list_scripts(self, **kwargs) -> List[ScriptBrief]:
+    def list_scripts(self, offset=0, limit=1000, **kwargs) -> ListScriptResponse:
+        # NOTE: set limit to 1000 for no-pagination
         filters = []
         if kwargs.get("user_id"):
             filters.append(Script.user_id == kwargs.get("user_id"))
         if kwargs.get("name_like"):
             filters.append(Script.name.like(f"{kwargs.get('name_like')}%"))
         with get_db() as db:
-            return [
+            total = db.query(Script).filter(*filters).count()
+            data = [
                 script_to_brief(script)
-                for script in db.query(Script).filter(*filters).all()
+                for script in db.query(Script)
+                .filter(*filters)
+                .offset(offset)
+                .limit(limit)
+                .all()
             ]
+            return ListScriptResponse(scripts=data, total=total)
 
     def get_script_by_id(self, id: str, **kwargs) -> Optional[ScriptModel]:
         filters = [Script.id == id]
