@@ -89,7 +89,7 @@
 				}}
 			>
 				<div class=" self-center mr-3">
-					<PythonLogo className="size-5" strokeWidth="1.5" />
+					<PythonLogo />
 				</div>
 				<div class=" self-center font-medium">{$i18n.t('Python Playground')}</div>
 			</button>

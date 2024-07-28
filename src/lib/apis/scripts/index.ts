@@ -1,6 +1,11 @@
 import { WEBUI_API_BASE_URL } from '$lib/constants';
 
-export const queryPyScriptsByName = async (token: string, name: string) => {
+type TListScript = {
+  scripts: any[],
+  total: number,
+}
+
+export const queryPyScriptsByName = async (token: string, name: string): Promise<TListScript> => {
   let error = null;
 
   const res = await fetch(`${WEBUI_API_BASE_URL}/scripts/?name_like=${name}`, {
@@ -58,7 +63,7 @@ export const createNewPyScripts = async (token: string, script: object) => {
   return res;
 };
 
-export const listPyScripts = async (token: string = ''): Promise<any> => {
+export const listPyScripts = async (token: string = ''): Promise<TListScript> => {
   let error = null;
 
   const res = await fetch(`${WEBUI_API_BASE_URL}/scripts/`, {

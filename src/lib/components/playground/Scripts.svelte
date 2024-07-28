@@ -115,7 +115,7 @@ print("Sorted array:", sorted_arr)
 
 	let scriptList: PythonScript[] = $pythonScripts;
 	let totalScripts: number = 0;
-	
+
 	let timeoutToQuery: Timer | null = null; // For debouncing
 
 	$: if (query !== '') {
@@ -124,7 +124,8 @@ print("Sorted array:", sorted_arr)
 		}
 		timeoutToQuery = setTimeout(async () => {
 			timeoutToQuery = null;
-			scriptList = await queryPyScriptsByName(localStorage.token, query);
+
+			scriptList = (await queryPyScriptsByName(localStorage.token, query.trim())).scripts;
 		}, 1000);
 	} else {
 		scriptList = $pythonScripts;
@@ -138,6 +139,17 @@ print("Sorted array:", sorted_arr)
 	$: if (selectedScript) {
 		showingScript = selectedScript;
 	}
+
+	const onSearchKeyUp = async (e: KeyboardEvent) => {
+		if (e.key === 'Enter') {
+			if (timeoutToQuery) {
+				clearTimeout(timeoutToQuery);
+			}
+			timeoutToQuery = null;
+			query = query.trim();
+			scriptList = (await queryPyScriptsByName(localStorage.token, query)).scripts;
+		}
+	};
 
 	const onUploadPythonFile = () => {
 		const reader = new FileReader();
@@ -198,7 +210,7 @@ print("Sorted array:", sorted_arr)
 			return updatePyScriptById(localStorage.token, showingScript.id, showingScript)
 				.then(async (res) => {
 					toast.success($i18n.t('Python script updated successfully'));
-					pythonScripts.set(await listPyScripts(localStorage.token));
+					pythonScripts.set((await listPyScripts(localStorage.token)).scripts);
 					editing = false;
 					selectedScript = res;
 					return res;
@@ -210,7 +222,7 @@ print("Sorted array:", sorted_arr)
 			return createNewPyScripts(localStorage.token, showingScript)
 				.then(async (res) => {
 					toast.success($i18n.t('Python script created successfully'));
-					pythonScripts.set(await listPyScripts(localStorage.token));
+					pythonScripts.set((await listPyScripts(localStorage.token)).scripts);
 					editing = false;
 					selectedScript = res;
 					return res;
@@ -250,7 +262,7 @@ print("Sorted array:", sorted_arr)
 
 		if (res) {
 			toast.success($i18n.t('Python script deleted successfully'));
-			pythonScripts.set(await listPyScripts(localStorage.token));
+			pythonScripts.set((await listPyScripts(localStorage.token)).scripts);
 		}
 		selectedScript = null;
 	};
@@ -294,7 +306,8 @@ print("Sorted array:", sorted_arr)
 					<input
 						class="w-full text-sm pr-4 py-1 rounded-r-xl outline-none bg-transparent"
 						bind:value={query}
-						placeholder={$i18n.t('Search Scripts By Name')}
+						on:keyup={onSearchKeyUp}
+						placeholder={$i18n.t('Search By Name Prefix')}
 					/>
 				</div>
 
@@ -490,6 +503,12 @@ print("Sorted array:", sorted_arr)
 						<div class="flex space-x-2">
 							<button
 								class=" text-blue-700"
+								on:click={() => {
+									executePythonAsWorker(showingScript.content);
+								}}>{$i18n.t('Run')}</button
+							>
+							<button
+								class=" text-blue-700"
 								on:click={async () => {
 									try {
 										await copyToClipboard(showingScript.content);
@@ -499,12 +518,6 @@ print("Sorted array:", sorted_arr)
 										toast.error($i18n.t('Failed to copy the code to clipboard'));
 									}
 								}}>{$i18n.t('Copy')}</button
-							>
-							<button
-								class=" text-blue-700"
-								on:click={() => {
-									executePythonAsWorker(showingScript.content);
-								}}>{$i18n.t('Run')}</button
 							>
 						</div>
 					</div>
@@ -532,6 +545,26 @@ print("Sorted array:", sorted_arr)
 					<button
 						class="w-40 px-2 py-2 rounded-xl border border-gray-200 dark:border-gray-600 dark:border-0 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1 justify-center"
 						on:click={() => {
+							scriptImportInputElement.click();
+						}}
+					>
+						<span>{$i18n.t('Upload new script')}</span>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 16 16"
+							fill="currentColor"
+							class="w-4 h-4"
+						>
+							<path
+								fill-rule="evenodd"
+								d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm4 9.5a.75.75 0 0 1-.75-.75V8.06l-.72.72a.75.75 0 0 1-1.06-1.06l2-2a.75.75 0 0 1 1.06 0l2 2a.75.75 0 1 1-1.06 1.06l-.72-.72v2.69a.75.75 0 0 1-.75.75Z"
+								clip-rule="evenodd"
+							/>
+						</svg>
+					</button>
+					<button
+						class="w-40 px-2 py-2 rounded-xl border border-gray-200 dark:border-gray-600 dark:border-0 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1 justify-center"
+						on:click={() => {
 							prepareNewScript();
 						}}
 					>
@@ -546,26 +579,6 @@ print("Sorted array:", sorted_arr)
 						>
 							<path
 								d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"
-							/>
-						</svg>
-					</button>
-					<button
-						class="w-40 px-2 py-2 rounded-xl border border-gray-200 dark:border-gray-600 dark:border-0 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1 justify-center"
-						on:click={() => {
-							scriptImportInputElement.click();
-						}}
-					>
-						<span>{$i18n.t('Upload script')}</span>
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							viewBox="0 0 16 16"
-							fill="currentColor"
-							class="w-4 h-4"
-						>
-							<path
-								fill-rule="evenodd"
-								d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm4 9.5a.75.75 0 0 1-.75-.75V8.06l-.72.72a.75.75 0 0 1-1.06-1.06l2-2a.75.75 0 0 1 1.06 0l2 2a.75.75 0 1 1-1.06 1.06l-.72-.72v2.69a.75.75 0 0 1-.75.75Z"
-								clip-rule="evenodd"
 							/>
 						</svg>
 					</button>
