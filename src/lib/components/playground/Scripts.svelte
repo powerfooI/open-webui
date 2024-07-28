@@ -206,6 +206,14 @@ print("Sorted array:", sorted_arr)
 	}
 
 	async function onMutatingScript() {
+		if (!showingScript.name) {
+			toast.error($i18n.t('Name is required'));
+			return;
+		}
+		if (!showingScript.content) {
+			toast.error($i18n.t('Content is required'));
+			return;
+		}
 		if (showingScript.id !== '') {
 			return updatePyScriptById(localStorage.token, showingScript.id, showingScript)
 				.then(async (res) => {
